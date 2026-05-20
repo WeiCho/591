@@ -1,0 +1,12 @@
+{
+  "target_cities": ["新北市"],
+  "target_regions": ["新店", "中和", "永和", "板橋", "土城", "三重", "蘆洲"],
+  "price_min": 15000,
+  "price_max": 28000,
+  "room_types": ["整層住家"],
+  "pet_friendly": false,
+  "floor_min": 2,
+  "area_min": 15,
+  "exclude_rooftop_addition": true,
+  "exclude_top_floor": true
+}

@@ -1,0 +1,66 @@
+name: Test 591 Crawler
+
+on:
+  workflow_dispatch:   # 手動觸發，測試用
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install playwright jinja2
+          playwright install chromium --with-deps
+
+      - name: Test 591 fetch (板橋, 最多 1 頁)
+        run: |
+          python - <<'EOF'
+          import asyncio, sys
+          from playwright.async_api import async_playwright
+          import time
+
+          async def main():
+              async with async_playwright() as pw:
+                  browser = await pw.chromium.launch(headless=True)
+                  ctx = await browser.new_context(locale="zh-TW")
+                  page = await ctx.new_page()
+
+                  print("Loading 591 homepage...")
+                  await page.goto("https://rent.591.com.tw/", wait_until="domcontentloaded", timeout=30000)
+                  await page.wait_for_timeout(3000)
+
+                  ts = str(int(time.time() * 1000))
+                  resp = await ctx.request.get(
+                      "https://bff-house.591.com.tw/v3/web/rent/list",
+                      params={"timestamp": ts, "regionid": "3", "kind": "1", "section": "26", "firstRow": "0"},
+                      headers={"device": "pc", "Referer": "https://rent.591.com.tw/"}
+                  )
+                  body = await resp.json()
+                  total = body.get("data", {}).get("total", 0)
+                  items = body.get("data", {}).get("items") or []
+
+                  print(f"HTTP status: {resp.status}")
+                  print(f"API status: {body.get('status')}")
+                  print(f"Total listings: {total}")
+                  print(f"Items in page: {len(items)}")
+
+                  if items:
+                      print(f"First item: {items[0].get('address')} / {items[0].get('price')}")
+                      print("✅ SUCCESS - 591 is accessible from GitHub Actions")
+                      sys.exit(0)
+                  else:
+                      print("❌ FAILED - No items returned")
+                      sys.exit(1)
+
+                  await browser.close()
+
+          asyncio.run(main())
+          EOF

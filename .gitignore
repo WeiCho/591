@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Data files (local only, rebuilt by crawler)
+history.jsonl
+all_listings.jsonl
+
+# Reports (generated, pushed separately by Actions)
+reports/
+
+# Misc
+.env
+*.log
