@@ -23,9 +23,8 @@ jobs:
       - name: Test 591 fetch (板橋, 最多 1 頁)
         run: |
           python - <<'EOF'
-          import asyncio, sys
+          import asyncio, sys, json, time
           from playwright.async_api import async_playwright
-          import time
 
           async def main():
               async with async_playwright() as pw:
@@ -33,45 +32,48 @@ jobs:
                   ctx = await browser.new_context(locale="zh-TW")
                   page = await ctx.new_page()
 
-                  print("Loading 591 homepage...")
-                  await page.goto("https://rent.591.com.tw/", wait_until="domcontentloaded", timeout=30000)
-                  await page.wait_for_timeout(3000)
+                  # Step 1: load homepage
+                  print("Step 1: loading homepage...")
+                  try:
+                      await page.goto("https://rent.591.com.tw/", wait_until="domcontentloaded", timeout=30000)
+                      await page.wait_for_timeout(3000)
+                      title = await page.title()
+                      print(f"  page title: {title}")
+                  except Exception as e:
+                      print(f"  ❌ homepage load failed: {e}")
+                      sys.exit(1)
 
+                  # Step 2: call API
+                  print("Step 2: calling API...")
                   ts = str(int(time.time() * 1000))
                   resp = await ctx.request.get(
                       "https://bff-house.591.com.tw/v3/web/rent/list",
                       params={"timestamp": ts, "regionid": "3", "kind": "1", "section": "26", "firstRow": "0"},
                       headers={"device": "pc", "Referer": "https://rent.591.com.tw/"}
                   )
-                  body = await resp.json()
-                  total = body.get("data", {}).get("total", 0)
-                  items = body.get("data", {}).get("items") or []
-
-                  print(f"HTTP status: {resp.status}")
+                  print(f"  HTTP status: {resp.status}")
                   raw = await resp.text()
-                  print(f"Response length: {len(raw)} bytes")
-                  print(f"Response preview: {raw[:500]}")
+                  print(f"  response length: {len(raw)} bytes")
+                  print(f"  response preview: {raw[:300]}")
 
-                  import json as _json
+                  # Step 3: parse JSON
                   try:
-                      body = _json.loads(raw)
+                      body = json.loads(raw)
                   except Exception as e:
                       print(f"❌ JSON parse failed: {e}")
-                      print("→ 591 is likely blocking GitHub Actions IP (Cloudflare challenge)")
+                      print("→ Cloudflare is blocking GitHub Actions IP")
                       sys.exit(1)
 
                   total = body.get("data", {}).get("total", 0)
                   items = body.get("data", {}).get("items") or []
-                  print(f"API status: {body.get('status')}")
-                  print(f"Total listings: {total}")
-                  print(f"Items in page: {len(items)}")
+                  print(f"  API status field: {body.get('status')}")
+                  print(f"  total: {total}, items returned: {len(items)}")
 
                   if items:
-                      print(f"First item: {items[0].get('address')} / {items[0].get('price')}")
-                      print("✅ SUCCESS - 591 is accessible from GitHub Actions")
-                      sys.exit(0)
+                      print(f"  first item: {items[0].get('address')} / NT${items[0].get('price')}")
+                      print("✅ SUCCESS")
                   else:
-                      print("❌ FAILED - No items returned")
+                      print("❌ FAILED - no items")
                       sys.exit(1)
 
                   await browser.close()
