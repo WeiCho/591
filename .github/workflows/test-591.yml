@@ -48,6 +48,20 @@ jobs:
                   items = body.get("data", {}).get("items") or []
 
                   print(f"HTTP status: {resp.status}")
+                  raw = await resp.text()
+                  print(f"Response length: {len(raw)} bytes")
+                  print(f"Response preview: {raw[:500]}")
+
+                  import json as _json
+                  try:
+                      body = _json.loads(raw)
+                  except Exception as e:
+                      print(f"❌ JSON parse failed: {e}")
+                      print("→ 591 is likely blocking GitHub Actions IP (Cloudflare challenge)")
+                      sys.exit(1)
+
+                  total = body.get("data", {}).get("total", 0)
+                  items = body.get("data", {}).get("items") or []
                   print(f"API status: {body.get('status')}")
                   print(f"Total listings: {total}")
                   print(f"Items in page: {len(items)}")
