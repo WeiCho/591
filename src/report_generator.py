@@ -1,7 +1,8 @@
 """HTML report generator.
 
 Renders a standalone, self-contained HTML file using Jinja2 + Tailwind CSS
-(loaded from CDN).  Sections: New → Price Drop → Active → Delisted.
+(loaded from CDN).  Sections: New → Price Drop → Active.
+Delisted listings are excluded from the report entirely.
 """
 from __future__ import annotations
 from datetime import date
@@ -13,13 +14,15 @@ from .diff_engine import DiffEntry
 
 _TEMPLATE = """\
 {# ── Card macro ─────────────────────────────────────────────── #}
-{% macro card(entry, kind) %}
+{% macro card(entry, kind, r2c) %}
 {% set prop = entry.property %}
 {% set old_price = entry.old_price %}
 {% set region = prop.address.split('-')[0] if prop.address and '-' in prop.address else (prop.address or '') %}
+{% set city = r2c.get(region, '') if r2c else '' %}
 <a href="{{ prop.link }}" target="_blank" rel="noopener"
-   class="card-item bg-white rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col{% if kind == 'delisted' %} opacity-40{% endif %}"
+   class="card-item bg-white rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col{% if kind == 'delisted' %} opacity-50 grayscale{% endif %}"
    data-region="{{ region }}"
+   data-city="{{ city }}"
    data-elevator="{{ 'true' if prop.has_elevator else 'false' }}"
    data-status="{{ kind }}">
 
@@ -56,7 +59,7 @@ _TEMPLATE = """\
 
     <!-- price -->
     <div class="mt-0.5">
-      <span class="text-2xl font-bold tracking-tight {% if kind == 'delisted' %}text-slate-400{% else %}text-slate-900{% endif %}">
+      <span class="text-2xl font-bold tracking-tight text-slate-900">
         NT${{ "{:,}".format(prop.price) }}
       </span>
       <span class="text-slate-400 text-sm ml-0.5">/月</span>
@@ -79,6 +82,7 @@ _TEMPLATE = """\
       {% if prop.area %}<span>📐 {{ prop.area }} 坪</span>{% endif %}
       {% if prop.layout %}<span>🛏 {{ prop.layout }}</span>{% endif %}
       {% if prop.address %}<span class="truncate max-w-full">📍 {{ prop.address }}</span>{% endif %}
+      {% if prop.listed_date %}<span>📅 上架 {{ prop.listed_date }}</span>{% endif %}
     </div>
   </div>
 </a>
@@ -89,11 +93,26 @@ _TEMPLATE = """\
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>租房監控報表 {{ report_date }}</title>
+  <title>我與寶的租房趣 {{ report_date }}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     .card-img { object-fit: cover; height: 192px; width: 100%; }
+
+    /* city tabs */
+    .city-tab {
+      cursor: pointer; transition: all .18s;
+      border-bottom: 2px solid transparent;
+      padding: 0.5rem 1.25rem;
+      font-size: .875rem; font-weight: 600;
+      color: #94a3b8;
+      white-space: nowrap;
+    }
+    .city-tab:hover { color: #4f46e5; }
+    .city-tab.active {
+      color: #4f46e5;
+      border-bottom-color: #4f46e5;
+    }
 
     /* region tags */
     .region-tag { cursor: pointer; transition: all .15s; }
@@ -111,16 +130,14 @@ _TEMPLATE = """\
     }
     .bld-tab:not(.active) { color: #94a3b8; }
 
-    /* card hidden by filter */
     .card-item.hidden-by-filter { display: none !important; }
-
-    /* section visibility */
-    .status-section { }
     .status-section.empty-section { display: none; }
-
-    /* empty state */
     .filter-empty { display: none; }
     .filter-empty.visible { display: flex; }
+
+    /* region row hidden when city not selected */
+    .city-regions { display: none; }
+    .city-regions.active { display: flex; }
   </style>
 </head>
 <body class="bg-slate-50 min-h-screen">
@@ -129,24 +146,26 @@ _TEMPLATE = """\
   <div class="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
     <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
       <div>
-        <h1 class="text-xl font-bold text-slate-900 leading-none">租房監控報表</h1>
+        <h1 class="text-xl font-bold text-slate-900 leading-none">我與寶的租房趣</h1>
         <p class="text-xs text-slate-400 mt-0.5">{{ report_date }}</p>
       </div>
       <!-- stat pills -->
       <div class="flex items-center gap-2 flex-wrap">
         <span class="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 text-sm font-semibold px-3 py-1.5 rounded-full ring-1 ring-emerald-200">
           <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-          新上架 {{ new_count }}
+          新上架 <span id="pill-new">{{ new_count }}</span>
         </span>
         <span class="inline-flex items-center gap-1.5 bg-amber-50 text-amber-700 text-sm font-semibold px-3 py-1.5 rounded-full ring-1 ring-amber-200">
-          ↓ 降價 {{ drop_count }}
+          ↓ 降價 <span id="pill-drop">{{ drop_count }}</span>
         </span>
         <span class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 text-sm font-semibold px-3 py-1.5 rounded-full ring-1 ring-blue-200">
-          在架中 {{ active_count }}
+          在架中 <span id="pill-active">{{ active_count }}</span>
         </span>
+        {% if delisted_count %}
         <span class="inline-flex items-center gap-1.5 bg-slate-100 text-slate-500 text-sm font-semibold px-3 py-1.5 rounded-full ring-1 ring-slate-200">
-          已下架 {{ delisted_count }}
+          下架 <span id="pill-delisted">{{ delisted_count }}</span>
         </span>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -175,16 +194,30 @@ _TEMPLATE = """\
     {% endif %}
 
     <!-- ══ FILTER CONTROLS ══════════════════════════════════════ -->
-    <div class="py-5 space-y-4">
+    <div class="py-5 space-y-3">
 
-      <!-- Layer 1: Region tags -->
-      <div class="flex flex-wrap items-center gap-2">
-        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wide w-8 shrink-0">區域</span>
-        <button class="region-tag active text-xs font-semibold px-3.5 py-1.5 rounded-full bg-slate-100 text-slate-600"
-                data-region="all">全部</button>
-        {% for region in regions %}
-        <button class="region-tag text-xs font-semibold px-3.5 py-1.5 rounded-full bg-slate-100 text-slate-600"
-                data-region="{{ region }}">{{ region }}</button>
+      {% if multi_city %}
+      <!-- Layer 0: City tabs (only shown when >1 city) -->
+      <div class="flex items-center gap-0 border-b border-slate-200 overflow-x-auto">
+        {% for city_name in city_names %}
+        <button class="city-tab{% if loop.first %} active{% endif %} shrink-0" data-city="{{ city_name }}">{{ city_name }}</button>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- Layer 1: Region tags — one row per city -->
+      <div class="space-y-2">
+        {% for city_name, city_regions in city_region_map.items() %}
+        <div class="city-regions" data-city-row="{{ city_name }}"
+             style="display:none; flex-wrap:wrap; align-items:center; gap:0.5rem;">
+          <span class="text-xs font-semibold text-slate-400 uppercase tracking-wide w-8 shrink-0">區域</span>
+          <button class="region-tag active text-xs font-semibold px-3.5 py-1.5 rounded-full bg-slate-100 text-slate-600"
+                  data-region="all" data-city-scope="{{ city_name }}">全部</button>
+          {% for region in city_regions %}
+          <button class="region-tag text-xs font-semibold px-3.5 py-1.5 rounded-full bg-slate-100 text-slate-600"
+                  data-region="{{ region }}" data-city-scope="{{ city_name }}">{{ region }}</button>
+          {% endfor %}
+        </div>
         {% endfor %}
       </div>
 
@@ -215,7 +248,7 @@ _TEMPLATE = """\
           <span class="section-count text-xs font-semibold px-2 py-0.5 rounded-full {{ badge_class }}"></span>
         </h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {% for entry in entries %}{{ card(entry, kind) }}{% endfor %}
+          {% for entry in entries %}{{ card(entry, kind, region_to_city) }}{% endfor %}
         </div>
       </section>
       {% endif %}
@@ -224,7 +257,7 @@ _TEMPLATE = """\
       {{ section(new_entries,      "new",      "新上架",  "bg-emerald-50 text-emerald-700") }}
       {{ section(drop_entries,     "drop",     "降價",    "bg-amber-50 text-amber-700") }}
       {{ section(active_entries,   "active",   "在架中",  "bg-blue-50 text-blue-700") }}
-      {{ section(delisted_entries, "delisted", "已下架",  "bg-slate-100 text-slate-500") }}
+      {{ section(delisted_entries, "delisted", "本次下架", "bg-slate-100 text-slate-500") }}
 
       <!-- empty state -->
       <div class="filter-empty flex-col items-center justify-center py-24 text-slate-300" id="empty-state">
@@ -237,23 +270,27 @@ _TEMPLATE = """\
 
   <script>
   (function() {
+    var firstCity     = {{ first_city_js }};
+    var currentCity   = (document.querySelector('.city-tab.active') || {dataset:{city:firstCity}}).dataset.city;
     var currentRegion = 'all';
     var currentBld    = 'elevator';
 
-    var allCards    = Array.from(document.querySelectorAll('.card-item'));
-    var sections    = Array.from(document.querySelectorAll('.status-section'));
-    var emptyState  = document.getElementById('empty-state');
+    var allCards   = Array.from(document.querySelectorAll('.card-item'));
+    var sections   = Array.from(document.querySelectorAll('.status-section'));
+    var emptyState = document.getElementById('empty-state');
 
     function applyFilter() {
       var visible = 0;
 
       allCards.forEach(function(card) {
+        var cityOk   = currentCity === 'all' || card.dataset.city === currentCity;
         var regionOk = currentRegion === 'all' || card.dataset.region === currentRegion;
-        var elevOk   = currentBld === 'elevator'
+        var isDelisted = card.dataset.status === 'delisted';
+        var elevOk   = isDelisted || (currentBld === 'elevator'
                        ? card.dataset.elevator === 'true'
-                       : card.dataset.elevator === 'false';
+                       : card.dataset.elevator === 'false');
 
-        if (regionOk && elevOk) {
+        if (cityOk && regionOk && elevOk) {
           card.classList.remove('hidden-by-filter');
           visible++;
         } else {
@@ -261,42 +298,74 @@ _TEMPLATE = """\
         }
       });
 
-      // update section visibility + counts
       sections.forEach(function(sec) {
-        var kind    = sec.dataset.kind;
         var showing = sec.querySelectorAll('.card-item:not(.hidden-by-filter)').length;
         var badge   = sec.querySelector('.section-count');
         if (badge) badge.textContent = showing + ' 筆';
         sec.classList.toggle('empty-section', showing === 0);
+
+        // sync header pill
+        var kind  = sec.dataset.kind;
+        var pillId = {new:'pill-new', drop:'pill-drop', active:'pill-active', delisted:'pill-delisted'}[kind];
+        if (pillId) {
+          var pill = document.getElementById(pillId);
+          if (pill) pill.textContent = showing;
+        }
       });
 
-      // update tab counts
       ['elevator','walkup'].forEach(function(bld) {
         var count = allCards.filter(function(c) {
+          var cityOk   = currentCity === 'all' || c.dataset.city === currentCity;
           var regionOk = currentRegion === 'all' || c.dataset.region === currentRegion;
           var elevOk   = bld === 'elevator' ? c.dataset.elevator === 'true' : c.dataset.elevator === 'false';
-          var notDelist = c.dataset.status !== 'delisted';
-          return regionOk && elevOk && notDelist;
+          return cityOk && regionOk && elevOk;
         }).length;
         var el = document.getElementById('count-' + bld);
         if (el) el.textContent = count + ' 筆';
       });
 
-      // empty state
       emptyState.classList.toggle('visible', visible === 0);
     }
 
-    // region tags
+    // ── City tabs ──────────────────────────────────────────────
+    document.querySelectorAll('.city-tab').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('.city-tab').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentCity   = btn.dataset.city;
+        currentRegion = 'all';  // reset region on city switch
+
+        // show correct region row
+        document.querySelectorAll('.city-regions').forEach(function(row) {
+          var match = row.dataset.cityRow === currentCity;
+          row.style.display = match ? 'flex' : 'none';
+          // reset active tag in this row
+          if (match) {
+            row.querySelectorAll('.region-tag').forEach(function(t) { t.classList.remove('active'); });
+            var allBtn = row.querySelector('[data-region="all"]');
+            if (allBtn) allBtn.classList.add('active');
+          }
+        });
+
+        applyFilter();
+      });
+    });
+
+    // ── Region tags ────────────────────────────────────────────
     document.querySelectorAll('.region-tag').forEach(function(btn) {
       btn.addEventListener('click', function() {
-        document.querySelectorAll('.region-tag').forEach(function(b) { b.classList.remove('active'); });
+        // only deactivate tags in the same city-scope row
+        var scope = btn.dataset.cityScope;
+        document.querySelectorAll('.region-tag[data-city-scope="' + scope + '"]').forEach(function(b) {
+          b.classList.remove('active');
+        });
         btn.classList.add('active');
         currentRegion = btn.dataset.region;
         applyFilter();
       });
     });
 
-    // building tabs
+    // ── Building tabs ──────────────────────────────────────────
     document.querySelectorAll('.bld-tab').forEach(function(btn) {
       btn.addEventListener('click', function() {
         document.querySelectorAll('.bld-tab').forEach(function(b) { b.classList.remove('active'); });
@@ -306,7 +375,11 @@ _TEMPLATE = """\
       });
     });
 
-    // init
+    // ── Init ───────────────────────────────────────────────────
+    document.querySelectorAll('.city-regions').forEach(function(row) {
+      row.style.display = row.dataset.cityRow === currentCity ? 'flex' : 'none';
+    });
+
     applyFilter();
   })();
   </script>
@@ -317,7 +390,6 @@ _TEMPLATE = """\
 
 
 def clean_old_reports(output_dir: Path) -> None:
-    """Delete all previously generated report_*.html files in output_dir."""
     if output_dir.exists():
         for old in output_dir.glob("report_*.html"):
             old.unlink()
@@ -328,28 +400,41 @@ def render_report(
     output_dir: str | Path = ".",
     config: dict | None = None,
 ) -> Path:
-    """Render a standalone HTML report for all entries.
-
-    Sections: New → Price Drop → Active (unchanged) → Delisted.
-    Deletes any previous report_*.html in output_dir before writing.
-    """
+    """Render a standalone HTML report. Delisted entries are excluded."""
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     clean_old_reports(out_dir)
 
-    new_entries      = [e for e in entries if e.status == "new"]
-    drop_entries     = [e for e in entries if e.status == "price_drop"]
-    active_entries   = [e for e in entries if e.status == "unchanged"]
-    delisted_entries = [e for e in entries if e.status == "delisted"]
+    def _sort_key(e: DiffEntry) -> str:
+        return e.property.listed_date or ""
 
-    # collect unique regions from all non-delisted entries, preserve insertion order
+    new_entries      = sorted([e for e in entries if e.status == "new"],       key=_sort_key, reverse=True)
+    drop_entries     = sorted([e for e in entries if e.status == "price_drop"], key=_sort_key, reverse=True)
+    active_entries   = sorted([e for e in entries if e.status == "unchanged"],  key=_sort_key, reverse=True)
+    delisted_entries = [e for e in entries if e.status == "delisted"]  # first-time delisted only
+
+    # build city → [region] map from config
+    cities_cfg: list[dict] = (config or {}).get("cities", [])
+    city_region_map: dict[str, list[str]] = {
+        c["name"]: c["regions"] for c in cities_cfg if c.get("regions")
+    }
+    city_names = list(city_region_map.keys())
+    multi_city = len(city_names) > 1
+
+    # build region → city reverse map for card data-city attribute
+    region_to_city: dict[str, str] = {}
+    for city_name, regions in city_region_map.items():
+        for r in regions:
+            region_to_city[r] = city_name
+
+    # collect unique regions from active entries (address format: "板橋區-路名")
     seen_regions: dict[str, None] = {}
     for e in new_entries + drop_entries + active_entries:
-        addr = e.property.address or ""
+        addr   = e.property.address or ""
         region = addr.split("-")[0].strip() if "-" in addr else addr.strip()
         if region:
             seen_regions[region] = None
-    regions = list(seen_regions.keys())
+    all_regions_list = list(seen_regions.keys())
 
     env      = Environment(loader=BaseLoader())
     template = env.from_string(_TEMPLATE)
@@ -364,7 +449,13 @@ def render_report(
         active_count=len(active_entries),
         delisted_count=len(delisted_entries),
         config=config,
-        regions=regions,
+        # city / region data for UI
+        multi_city=multi_city,
+        city_names=city_names,
+        city_region_map=city_region_map,
+        all_regions_list=all_regions_list,
+        region_to_city=region_to_city,
+        first_city_js=f'"{city_names[0]}"' if city_names else '"all"',
     )
 
     filename = out_dir / f"report_{date.today().strftime('%Y%m%d')}.html"

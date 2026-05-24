@@ -1,13 +1,16 @@
 # 台灣租房監控機器人
 
-每次執行抓取 591 租屋資訊 → 去重過濾 → 歷史比對 → 輸出靜態 HTML 報表。
+每次執行抓取 591 租屋資訊 → 去重過濾 → 歷史比對 → 輸出靜態 HTML 報表 → 自動發布到 GitHub Pages。
 
 ## 執行
 
 ```powershell
-py main.py --platforms 591    # 正式執行
+py main.py                    # 全平台正式執行
+py main.py --platforms 591    # 只跑 591
 py main.py --dry-run          # 測試模式（不打網路）
 ```
+
+> **重要**：Windows 上必須用 `py`，不是 `python`（python 指向 MS Store 空殼）
 
 ## 專案結構
 
@@ -20,11 +23,10 @@ src/
   diff_engine.py          # 歷史比對（history.jsonl + all_listings.jsonl）
   filter_engine.py        # 去重 + 條件過濾
   report_generator.py     # Jinja2 + Tailwind CDN → 靜態 HTML
+  github_publisher.py     # GitHub Contents API → gh-pages 自動發布
   fetchers/
     base.py               # clean_price(), clean_area()
     fetcher_591.py        # 591 爬蟲（Playwright）
-    sinyi.py              # 信義房屋（架構完成，selector 待驗證）
-    yungching.py          # 永慶房屋（架構完成，selector 待驗證）
 reports/                  # 產出的 HTML 報表（每次執行覆蓋）
 history.jsonl             # diff 用歷史庫（精簡欄位）
 all_listings.jsonl        # 顯示用歷史庫（完整 Property 欄位）
@@ -34,8 +36,10 @@ all_listings.jsonl        # 顯示用歷史庫（完整 Property 欄位）
 
 ```json
 {
-  "target_cities": ["新北市"],
-  "target_regions": ["新店", "中和", "永和", "板橋", "土城", "三重", "蘆洲"],
+  "cities": [
+    { "name": "新北市", "regions": ["新店區", "中和區", "永和區", "板橋區", "土城區", "三重區", "蘆洲區"] },
+    { "name": "台北市", "regions": ["信義區", "中山區", "中正區", "松山區", "萬華區", "士林區", "大安區"] }
+  ],
   "price_min": 15000,
   "price_max": 28000,
   "room_types": ["整層住家"],
@@ -43,26 +47,38 @@ all_listings.jsonl        # 顯示用歷史庫（完整 Property 欄位）
   "floor_min": 2,
   "area_min": 15,
   "exclude_rooftop_addition": true,
-  "exclude_top_floor": true
+  "exclude_top_floor": true,
+  "github_publish": {
+    "repo":  "username/rent-report",
+    "token": "ghp_xxxx"
+  }
 }
 ```
 
-`target_regions` 設為 `["全區"]` 或空陣列則不限行政區。
+- `regions` 名稱需帶「區」，與 591 address 格式一致
+- `regions` 設為空陣列則不限行政區
+- `pet_friendly`：設定但過濾邏輯尚未實作
+- `github_publish`：選填，省略則只產本機報表
+
+## GitHub Pages 初次設定（一次性）
+
+1. 在 GitHub 新建一個 **public** repo，例如 `rent-report`
+2. 建立 **fine-grained PAT**：Settings → Developer settings → Fine-grained tokens
+   - Repository access：只選 `rent-report`
+   - Permissions → Contents：**Read and write**
+3. 把 token 填入 `config.json` 的 `github_publish.token`
+4. 跑一次 `py main.py` — publisher 會自動建立 `gh-pages` branch 並上傳 `index.html`
+5. repo Settings → Pages → Source 選 **gh-pages** branch，root `/`
+6. 之後報表網址固定為 `https://username.github.io/rent-report/`
 
 ## Report 功能
 
-- **區域 tag**：點選行政區快速篩選，支援「全部」
+- **城市 tab**：多城市時顯示，切換後只顯示該城市的區域
+- **區域 tag**：點選行政區快速篩選
 - **建物分頁**：電梯大樓／華廈 vs 公寓（依 591 `tags` 欄位判斷）
-- **四種狀態**：新上架 / 降價 / 在架中 / 已下架
-- **下架偵測**：上次有、這次沒撈到的物件自動標為已下架
-
-## 完成狀態
-
-- `fetcher_591.py` — 實測正常，支援 section 行政區篩選
-- `diff_engine.py` — history + all_listings 雙庫，下架偵測
-- `filter_engine.py` — 去重（address+price+area+title）+ 條件過濾
-- `report_generator.py` — 區域 tag + 電梯/公寓 tab + 互動篩選
-- `sinyi.py` / `yungching.py` — 架構完成，selector 尚未驗證
+- **四種狀態**：新上架 / 降價 / 在架中 / 本次下架
+  - 下架：首次消失當天顯示一次（灰色遮罩），之後不再出現
+- **上架日期**：從 `post_time` Unix timestamp 解析，卡片顯示，各 section 依上架日期降序排列
 
 ## 注意
 

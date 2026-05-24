@@ -61,8 +61,10 @@ def _to_history_record(prop: Property) -> dict:
     }
 
 
-def _to_listing_record(prop: Property) -> dict:
+def _to_listing_record(prop: Property, existing: dict | None = None) -> dict:
     """Full display record for all_listings.jsonl."""
+    # Preserve the original listed_date — once written, never overwritten
+    listed_date = (existing or {}).get("listed_date") or prop.listed_date
     return {
         "hash_key":     prop.hash_key,
         "platform":     prop.platform,
@@ -78,6 +80,7 @@ def _to_listing_record(prop: Property) -> dict:
         "current_floor": prop.current_floor,
         "total_floors": prop.total_floors,
         "has_elevator": prop.has_elevator,
+        "listed_date":  listed_date,
         "last_seen":    date.today().isoformat(),
         "delisted":     False,
     }
@@ -99,6 +102,7 @@ def _record_to_property(r: dict) -> Property:
         current_floor=r.get("current_floor"),
         total_floors=r.get("total_floors"),
         has_elevator=r.get("has_elevator", False),
+        listed_date=r.get("listed_date"),
     )
 
 
@@ -134,13 +138,23 @@ def run_diff(
         status, old_price = _classify(prop, history)
         entries.append(DiffEntry(property=prop, status=status, old_price=old_price))
         history[prop.hash_key]  = _to_history_record(prop)
-        listings[prop.hash_key] = _to_listing_record(prop)  # upsert with fresh data
+        listings[prop.hash_key] = _to_listing_record(prop, existing=listings.get(prop.hash_key))
         current_keys.add(prop.hash_key)
 
     # detect delisted: previously known, not seen this run
+    # Skip entirely when no properties were fetched (e.g. --dry-run) to avoid
+    # falsely marking every listing as delisted.
+    # First time delisted → include in report once (delisted_date = today)
+    # Already delisted in a prior run → skip (delisted_date already set)
+    if not properties:
+        save_history(history, history_path)
+        _save_jsonl(listings, all_listings_path)
+        return entries
+
     for key, record in listings.items():
         if key not in current_keys and not record.get("delisted"):
             record["delisted"] = True
+            record["delisted_date"] = date.today().isoformat()
             prop = _record_to_property(record)
             entries.append(DiffEntry(property=prop, status="delisted", old_price=None))
 

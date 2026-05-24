@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 
 from playwright.async_api import async_playwright
 
@@ -80,6 +81,8 @@ ROOM_TYPE_CODES: dict[str, int] = {
 API_URL   = "https://bff-house.591.com.tw/v3/web/rent/list"
 PAGE_SIZE = 30
 
+_raw_keys_logged = False  # print API field names once for debugging
+
 
 def _api_headers(deviceid: str) -> dict:
     return {
@@ -118,6 +121,10 @@ def _build_params(
 
 
 def _parse_item(raw: dict) -> Property | None:
+    global _raw_keys_logged
+    if not _raw_keys_logged:
+        logger.info("591 raw item keys: %s", list(raw.keys()))
+        _raw_keys_logged = True
     try:
         post_id = str(raw.get("id", ""))
         if not post_id:
@@ -142,6 +149,15 @@ def _parse_item(raw: dict) -> Property | None:
         tags = raw.get("tags") or []
         has_elevator = "有電梯" in tags
 
+        # post_time is a Unix timestamp (seconds) returned by the 591 API
+        listed_date: str | None = None
+        post_ts = raw.get("post_time") or raw.get("posttime") or raw.get("insert_time")
+        if post_ts:
+            try:
+                listed_date = datetime.fromtimestamp(int(post_ts), tz=timezone.utc).strftime("%Y-%m-%d")
+            except (ValueError, OSError):
+                pass
+
         return Property(
             id=post_id,
             platform="591",
@@ -156,6 +172,7 @@ def _parse_item(raw: dict) -> Property | None:
             current_floor=current_floor,
             total_floors=total_floors,
             has_elevator=has_elevator,
+            listed_date=listed_date,
         )
     except Exception as exc:
         logger.warning("591: failed to parse item id=%s — %s", raw.get("id"), exc)
@@ -252,39 +269,46 @@ async def _fetch_city_async(
     return results
 
 
-async def fetch_591_async(config: dict) -> list[Property]:
-    cities      = config.get("target_cities", [])
-    regions     = config.get("target_regions", [])
-    room_types  = config.get("room_types", [])
-    price_min   = config.get("price_min", 0)
-    price_max   = config.get("price_max", 999_999)
-    floor_min   = config.get("floor_min", 1)
+def _resolve_section_ids(regions: list[str]) -> list[int | None]:
+    """Map region names to 591 section IDs. Empty/全區 → [None] (no filter)."""
+    if not regions or regions == ["全區"]:
+        return [None]
+    ids: list[int | None] = []
+    for region in regions:
+        sid = SECTION_IDS.get(region)
+        if sid is None:
+            logger.warning("591: unknown region '%s', skipping", region)
+        else:
+            ids.append(sid)
+    return ids if ids else [None]
 
-    # 解析 target_regions → section IDs；「全區」或空清單表示不限區域
-    use_all_regions = not regions or regions == ["全區"]
-    section_ids: list[int | None]
-    if use_all_regions:
-        section_ids = [None]
-    else:
-        section_ids = []
-        for region in regions:
-            sid = SECTION_IDS.get(region)
-            if sid is None:
-                logger.warning("591: unknown region '%s', skipping", region)
-            else:
-                section_ids.append(sid)
-        if not section_ids:
-            logger.warning("591: no valid regions found, falling back to full city")
-            section_ids = [None]
+
+async def fetch_591_async(config: dict) -> list[Property]:
+    room_types = config.get("room_types", [])
+    price_min  = config.get("price_min", 0)
+    price_max  = config.get("price_max", 999_999)
+    floor_min  = config.get("floor_min", 1)
+
+    # Support nested cities structure: [{"name": "新北市", "regions": [...]}]
+    # Fall back to legacy flat target_cities + target_regions
+    cities_cfg: list[dict] = config.get("cities") or []
+    if not cities_cfg:
+        cities_cfg = [
+            {"name": c, "regions": config.get("target_regions", [])}
+            for c in config.get("target_cities", [])
+        ]
 
     all_props: list[Property] = []
-    seen_ids: set[str] = set()
+    seen_ids:  set[str] = set()
 
-    for city_name in cities:
-        city_id = CITY_IDS.get(city_name)
+    for city_entry in cities_cfg:
+        city_name = city_entry.get("name", "")
+        city_id   = CITY_IDS.get(city_name)
         if city_id is None:
             logger.warning("591: unknown city '%s', skipping", city_name)
             continue
+
+        section_ids = _resolve_section_ids(city_entry.get("regions", []))
 
         for rt in room_types:
             kind = ROOM_TYPE_CODES.get(rt)
@@ -293,18 +317,16 @@ async def fetch_591_async(config: dict) -> list[Property]:
                 continue
 
             for section_id in section_ids:
-                region_label = next(
-                    (r for r, sid in SECTION_IDS.items() if sid == section_id),
-                    "全區",
-                ) if section_id is not None else "全區"
+                region_label = (
+                    next((r for r, sid in SECTION_IDS.items() if sid == section_id), "全區")
+                    if section_id is not None else "全區"
+                )
                 logger.info("591: fetching %s / %s / %s …", city_name, rt, region_label)
                 props = await _fetch_city_async(
                     city_id, kind, price_min, price_max, floor_min, section_id
                 )
-                logger.info(
-                    "591: got %d listings for %s/%s/%s",
-                    len(props), city_name, rt, region_label,
-                )
+                logger.info("591: got %d listings for %s/%s/%s",
+                            len(props), city_name, rt, region_label)
                 for p in props:
                     if p.id not in seen_ids:
                         seen_ids.add(p.id)

@@ -101,13 +101,11 @@ def run(config_path: str, platforms: list[str], dry_run: bool) -> None:
     _print_banner("Step 3 │ 歷史比對")
     entries = run_diff(result.kept)
 
-    new_entries      = [e for e in entries if e.status == "new"]
-    drop_entries     = [e for e in entries if e.status == "price_drop"]
-    active_entries   = [e for e in entries if e.status == "unchanged"]
-    delisted_entries = [e for e in entries if e.status == "delisted"]
-    logger.info("New: %d | Price drop: %d | Active: %d | Delisted: %d",
-                len(new_entries), len(drop_entries),
-                len(active_entries), len(delisted_entries))
+    new_entries    = [e for e in entries if e.status == "new"]
+    drop_entries   = [e for e in entries if e.status == "price_drop"]
+    active_entries = [e for e in entries if e.status == "unchanged"]
+    logger.info("New: %d | Price drop: %d | Active: %d",
+                len(new_entries), len(drop_entries), len(active_entries))
 
     # ── 4. Report ─────────────────────────────────────────────────────────────
     _print_banner("Step 4 │ 產出 HTML 報表")
@@ -115,13 +113,27 @@ def run(config_path: str, platforms: list[str], dry_run: bool) -> None:
     logger.info("Report written: %s", report_path.resolve())
     print(f"\n  報表已產出：{report_path.resolve()}\n")
 
+    # ── 5. Publish to GitHub Pages ────────────────────────────────────────────
+    pages_url: str | None = None
+    gh_cfg = config.get("github_publish")
+    if gh_cfg:
+        _print_banner("Step 5 │ 發布到 GitHub Pages")
+        try:
+            from src.github_publisher import publish
+            pages_url = publish(report_path, repo=gh_cfg["repo"], token=gh_cfg["token"])
+            print(f"\n  GitHub Pages 已更新：{pages_url}\n")
+        except Exception as exc:
+            logger.warning("GitHub Pages 發布失敗（不影響本機報表）：%s", exc)
+
     # ── Summary ───────────────────────────────────────────────────────────────
     _print_banner("完成")
     print(f"  新上架：{len(new_entries)} 筆")
     print(f"  降  價：{len(drop_entries)} 筆")
     print(f"  在架中：{len(active_entries)} 筆")
-    print(f"  下  架：{len(delisted_entries)} 筆")
-    print(f"  報  表：{report_path}\n")
+    print(f"  報  表：{report_path}")
+    if pages_url:
+        print(f"  線  上：{pages_url}")
+    print()
 
 
 def main() -> None:

@@ -3,16 +3,9 @@ from typing import NamedTuple
 
 from .models import Property
 
-_ROOFTOP_KEYWORDS = ("頂加", "頂樓加蓋", "頂加物件")
+_ROOFTOP_KEYWORDS  = ("頂加", "頂樓加蓋", "頂加物件")
+_SOCIAL_HOUSING_KEYWORDS = ("社宅", "社會住宅")
 
-
-def _titles_overlap(a: str, b: str) -> bool:
-    """Return True if either title is a substring of the other (partial match)."""
-    a, b = a.strip(), b.strip()
-    if not a or not b:
-        return False
-    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
-    return shorter in longer
 
 
 def dedup_properties(properties: list[Property]) -> tuple[list[Property], int]:
@@ -23,21 +16,19 @@ def dedup_properties(properties: list[Property]) -> tuple[list[Property], int]:
 
     Returns (deduped list, number of duplicates removed).
     """
-    # group key → list of kept properties in that group
-    groups: dict[str, list[Property]] = {}
+    seen_keys: set[str] = set()
     kept_flat: list[Property] = []
 
     for prop in properties:
         address = (prop.address or "").strip()
         area    = round(prop.area, 1) if prop.area is not None else ""
-        key     = f"{address}|{prop.price}|{area}"
-        title   = (prop.title or "").strip()
+        floor   = (prop.floor or "").strip()
+        # Same address + price + area + floor → same physical unit regardless of title
+        key = f"{address}|{prop.price}|{area}|{floor}"
 
-        group = groups.setdefault(key, [])
-        # check if this title overlaps with any already-kept title in the group
-        if any(_titles_overlap(title, kept.title or "") for kept in group):
+        if key in seen_keys:
             continue  # duplicate — skip
-        group.append(prop)
+        seen_keys.add(key)
         kept_flat.append(prop)
 
     removed = len(properties) - len(kept_flat)
@@ -54,6 +45,11 @@ def _is_rooftop_addition(prop: Property) -> bool:
         if field and any(kw in field for kw in _ROOFTOP_KEYWORDS):
             return True
     return False
+
+
+def _is_social_housing(prop: Property) -> bool:
+    title = prop.title or ""
+    return any(kw in title for kw in _SOCIAL_HOUSING_KEYWORDS)
 
 
 def _is_top_floor(prop: Property) -> bool:
@@ -79,6 +75,9 @@ def apply_filters(properties: list[Property], config: dict) -> FilterResult:
 
     for prop in properties:
         reasons: list[str] = []
+
+        if _is_social_housing(prop):
+            reasons.append("社宅/社會住宅 (標題含關鍵字)")
 
         if floor_min > 1 and prop.current_floor is not None:
             if prop.current_floor < floor_min:
