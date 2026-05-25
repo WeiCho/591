@@ -1,11 +1,5 @@
-# ── Phase 1 (config + diff engine) ──────────────────────────
-# (no third-party deps needed for Phase 1 — stdlib only)
-
-# ── Phase 2 (scrapers) ───────────────────────────────────────
-playwright>=1.44.0       # 591 dynamic anti-bot
+playwright>=1.44.0       # 591 爬蟲（headless Chromium）
 httpx>=0.27.0            # Sinyi / Yungching HTTP client
-beautifulsoup4>=4.12.0   # HTML parsing for Sinyi / Yungching
+beautifulsoup4>=4.12.0   # HTML parsing
 lxml>=5.2.0              # fast BS4 parser
-
-# ── Phase 3 (HTML report) ────────────────────────────────────
-jinja2>=3.1.0            # HTML template rendering
+jinja2>=3.1.0            # HTML report template

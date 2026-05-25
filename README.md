@@ -2,6 +2,13 @@
 
 抓取 591 租屋資訊 → 去重過濾 → 歷史比對 → 輸出靜態 HTML 報表 → 自動發布 GitHub Pages。
 
+## 安裝
+
+```powershell
+pip install -r requirements.txt
+playwright install chromium
+```
+
 ## 執行
 
 ```powershell
