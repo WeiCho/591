@@ -1,27 +1,15 @@
 {
   "cities": [
-    {
-      "_comment": "支援多城市，regions 填行政區名稱（需帶「區」字）；空陣列代表不限行政區",
-      "name": "新北市",
-      "regions": ["新店區", "中和區", "永和區", "板橋區", "土城區", "三重區", "蘆洲區"]
-    },
-    {
-      "name": "台北市",
-      "regions": ["信義區", "中山區", "大安區"]
-    }
+    { "name": "新北市", "regions": ["新店區", "中和區", "永和區", "板橋區", "土城區", "三重區", "蘆洲區"] },
+    { "name": "台北市", "regions": ["信義區", "中山區", "大安區"] }
   ],
-  "_comment_price": "月租金範圍（新台幣）",
   "price_min": 15000,
   "price_max": 28000,
-  "_comment_room": "房型：整層住家 / 獨立套房 / 分租套房",
   "room_types": ["整層住家"],
-  "_comment_floor": "最低樓層（1 = 不限）；最小坪數（0 = 不限）",
   "floor_min": 2,
   "area_min": 15,
-  "_comment_filters": "exclude_rooftop_addition: 排除頂加；exclude_top_floor: 排除頂樓（最高層）",
   "exclude_rooftop_addition": true,
   "exclude_top_floor": true,
-  "_comment_publish": "選填，省略則只產本機報表。token 需 GitHub fine-grained PAT，Contents: Read and write",
   "github_publish": {
     "repo": "your-username/rent-report",
     "token": "ghp_xxxx"
