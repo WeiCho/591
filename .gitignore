@@ -19,3 +19,4 @@ reports/
 # Misc
 .env
 *.log
+config.json
