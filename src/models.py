@@ -63,6 +63,7 @@ class Property:
     current_floor: Optional[int] = field(default=None)
     total_floors: Optional[int] = field(default=None)
     has_elevator: bool = field(default=False)
+    tags: list = field(default_factory=list)
     listed_date: Optional[str] = field(default=None)  # ISO date string, e.g. "2026-05-20"
     hash_key: str = field(init=False)
 

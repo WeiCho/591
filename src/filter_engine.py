@@ -49,7 +49,9 @@ def _is_rooftop_addition(prop: Property) -> bool:
 
 def _is_social_housing(prop: Property) -> bool:
     title = prop.title or ""
-    return any(kw in title for kw in _SOCIAL_HOUSING_KEYWORDS)
+    if any(kw in title for kw in _SOCIAL_HOUSING_KEYWORDS):
+        return True
+    return any(kw in tag for tag in prop.tags for kw in _SOCIAL_HOUSING_KEYWORDS)
 
 
 def _is_top_floor(prop: Property) -> bool:

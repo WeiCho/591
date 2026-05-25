@@ -147,7 +147,12 @@ def _parse_item(raw: dict) -> Property | None:
         link = raw.get("url") or f"https://rent.591.com.tw/{post_id}"
 
         tags = raw.get("tags") or []
-        has_elevator = "有電梯" in tags
+        # 台灣建築法規 6F+ 必裝電梯；591 tag 有時漏標，用總樓層補判
+        has_elevator = "有電梯" in tags or (
+            current_floor is not None and current_floor >= 6
+        ) or (
+            total_floors is not None and total_floors >= 6
+        )
 
         # post_time is a Unix timestamp (seconds) returned by the 591 API
         listed_date: str | None = None
@@ -172,6 +177,7 @@ def _parse_item(raw: dict) -> Property | None:
             current_floor=current_floor,
             total_floors=total_floors,
             has_elevator=has_elevator,
+            tags=tags,
             listed_date=listed_date,
         )
     except Exception as exc:
