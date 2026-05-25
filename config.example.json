@@ -1,0 +1,17 @@
+{
+  "cities": [
+    { "name": "新北市", "regions": ["新店區", "中和區", "永和區", "板橋區", "土城區", "三重區", "蘆洲區"] },
+    { "name": "台北市", "regions": ["信義區", "中山區", "大安區"] }
+  ],
+  "price_min": 15000,
+  "price_max": 28000,
+  "room_types": ["整層住家"],
+  "floor_min": 2,
+  "area_min": 15,
+  "exclude_rooftop_addition": true,
+  "exclude_top_floor": true,
+  "github_publish": {
+    "repo": "your-username/rent-report",
+    "token": "ghp_xxxx"
+  }
+}

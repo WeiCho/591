@@ -2,6 +2,17 @@
 
 抓取 591 租屋資訊 → 去重過濾 → 歷史比對 → 輸出靜態 HTML 報表 → 自動發布 GitHub Pages。
 
+## 設定
+
+複製範例並填入你的搜尋條件：
+
+```powershell
+cp config.example.json config.json
+```
+
+- `regions` 帶「區」字；空陣列則不限行政區
+- `github_publish` 選填，省略則只產本機報表；token 需 Contents R+W 權限
+
 ## 安裝
 
 ```powershell
