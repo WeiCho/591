@@ -31,7 +31,7 @@ py main.py --dry-run          # 不打網路，測試 diff + report 流程
 - pure httpx 會被 Cloudflare 擋 → 必須用 Playwright headless 暖身建 session，再用 `context.request.get()` 打 API
 - 每個 section 各自開一個 browser，間隔 1.2 秒，`if not items` 判斷最後一頁
 - `price` 欄位是字串 `"25,000"`，需 replace 逗號轉 int
-- `has_elevator`：`tags` 含 `"有電梯"` **或** `total_floors >= 6` **或** `current_floor >= 6`（台灣建築法規 6F+ 必裝電梯）
+- `has_elevator`：`tags` 含 `"有電梯"` **或** `total_floors >= 7` **或** `current_floor >= 7`（台灣公寓最高 6 層，7F+ 必有電梯）
 
 ---
 
