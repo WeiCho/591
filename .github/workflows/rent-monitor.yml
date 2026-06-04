@@ -1,0 +1,32 @@
+name: Rent Monitor
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天 00:00 UTC = 08:00 台灣時間
+  workflow_dispatch:      # 允許手動觸發
+
+jobs:
+  run:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create config.json
+        run: |
+          python3 -c "
+          import json
+          with open('config.example.json') as f:
+              config = json.load(f)
+          config['github_publish']['repo'] = 'WeiCho/591_report'
+          config['github_publish']['token'] = '${{ secrets.GITHUB_PUBLISH_TOKEN }}'
+          with open('config.json', 'w') as f:
+              json.dump(config, f, ensure_ascii=False, indent=2)
+          "
+
+      - name: Install dependencies
+        run: |
+          pip3 install -r requirements.txt
+          python3 -m playwright install chromium
+
+      - name: Run scraper
+        run: python3 main.py
