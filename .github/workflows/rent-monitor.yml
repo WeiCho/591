@@ -2,7 +2,7 @@ name: Rent Monitor
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 00:00 UTC = 08:00 台灣時間
+    - cron: '0 2 * * 1-5'  # 每平日 02:00 UTC = 10:00 台灣時間
   workflow_dispatch:      # 允許手動觸發
 
 jobs:
