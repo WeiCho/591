@@ -1,19 +1,16 @@
 """信義房屋 (sinyi.com.tw) rental fetcher.
 
-Uses httpx + BeautifulSoup4 to scrape the rendered HTML listing pages.
+URL format (confirmed 2025-06):
+  /rent/list/{city}/{zips}-zip/{price_min}-{price_max}-price[/{area_min}-9999-area][/{type}]/index.html
+  Pagination page N: .../{type}/N/index.html  (page 1 = /index.html)
 
-NOTE: Sinyi uses a React SPA; the initial HTML is server-side rendered (SSR)
-for SEO, so most listing data IS present in the raw HTML.  If a future site
-update removes SSR, switch this module to Playwright.
-
-Selector reference — verified against sinyi.com.tw/rent/ 2024-Q1.
-If selectors stop matching, open the page in DevTools and re-check.
+Server-side filtering handles price / area / type / district — no Python-level
+re-filtering needed.  Uses httpx + BeautifulSoup (SSR HTML, no JS required).
 """
 from __future__ import annotations
 import logging
 import re
 from typing import Optional
-from urllib.parse import urlencode
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -25,162 +22,224 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.sinyi.com.tw"
 
-# Map config city names → Sinyi URL city slugs
-# FIXME: verify these against sinyi.com.tw/rent/ dropdown values
 CITY_SLUGS: dict[str, str] = {
-    "台北市": "taipei-city",
-    "新北市": "new-taipei-city",
-    "基隆市": "keelung-city",
-    "桃園市": "taoyuan-city",
-    "新竹市": "hsinchu-city",
-    "新竹縣": "hsinchu-county",
-    "台中市": "taichung-city",
-    "台南市": "tainan-city",
-    "高雄市": "kaohsiung-city",
+    "台北市": "Taipei-city",
+    "新北市": "NewTaipei-city",
+    "基隆市": "Keelung-city",
+    "桃園市": "Taoyuan-city",
+    "新竹市": "Hsinchu-city",
+    "新竹縣": "Hsinchu-county",
+    "台中市": "Taichung-city",
+    "台南市": "Tainan-city",
+    "高雄市": "Kaohsiung-city",
 }
 
+# District name (with or without 區) → Taiwan postal code
+DISTRICT_ZIPS: dict[str, int] = {
+    # ── 台北市 ──────────────────────────────────
+    "中正": 100, "中正區": 100,
+    "大同": 103, "大同區": 103,
+    "中山": 104, "中山區": 104,
+    "松山": 105, "松山區": 105,
+    "大安": 106, "大安區": 106,
+    "萬華": 108, "萬華區": 108,
+    "信義": 110, "信義區": 110,
+    "士林": 111, "士林區": 111,
+    "北投": 112, "北投區": 112,
+    "內湖": 114, "內湖區": 114,
+    "南港": 115, "南港區": 115,
+    "文山": 116, "文山區": 116,
+    # ── 新北市 ──────────────────────────────────
+    "板橋": 220, "板橋區": 220,
+    "汐止": 221, "汐止區": 221,
+    "新店": 231, "新店區": 231,
+    "永和": 234, "永和區": 234,
+    "中和": 235, "中和區": 235,
+    "土城": 236, "土城區": 236,
+    "樹林": 238, "樹林區": 238,
+    "三重": 241, "三重區": 241,
+    "新莊": 242, "新莊區": 242,
+    "泰山": 243, "泰山區": 243,
+    "林口": 244, "林口區": 244,
+    "蘆洲": 247, "蘆洲區": 247,
+    "五股": 248, "五股區": 248,
+    "淡水": 251, "淡水區": 251,
+    "三峽": 237, "三峽區": 237,
+    "鶯歌": 239, "鶯歌區": 239,
+    # ── 其他縣市 ─────────────────────────────────
+    "東區": 600,  # 台中
+}
+
+# Confirmed slug for 整層住家; others TBD
 ROOM_TYPE_SLUGS: dict[str, str] = {
-    "整層住家": "whole",
-    "獨立套房": "suite",
-    "分租套房": "shared-suite",
-    "雅房":     "room",
+    "整層住家": "house-use",
 }
 
 
-def _build_search_url(city_slug: str, config: dict, page: int = 1) -> str:
-    room_types = config.get("room_types", [])
-    type_slug  = ROOM_TYPE_SLUGS.get(room_types[0], "") if room_types else ""
-    floor_min  = config.get("floor_min", 1)
+def _build_url(
+    city_slug:      str,
+    zip_codes:      list[int],
+    price_min:      int,
+    price_max:      int,
+    area_min:       float,
+    room_type_slug: str,
+    page:           int = 1,
+) -> str:
+    parts: list[str] = [BASE_URL, "rent", "list", city_slug]
 
-    qs = {
-        "price_lower": config.get("price_min", 0),
-        "price_upper": config.get("price_max", 999_999),
-        "page":        page,
-    }
-    if type_slug:
-        qs["property_type"] = type_slug
-    if floor_min > 1:
-        qs["floor_lower"] = floor_min
-    if config.get("has_elevator"):
-        qs["elevator"] = 1
-    if config.get("pet_friendly"):
-        qs["pet"] = 1
+    if zip_codes:
+        parts.append("-".join(str(z) for z in zip_codes) + "-zip")
 
-    # FIXME: confirm the exact URL path and param names against sinyi.com.tw
-    return f"{BASE_URL}/rent/{city_slug}/?{urlencode(qs)}"
+    parts.append(f"{price_min}-{price_max}-price")
 
+    if area_min > 0:
+        parts.append(f"{int(area_min)}-9999-area")
 
-def _parse_floor_sinyi(text: str) -> tuple[Optional[int], Optional[int], str]:
-    """Extract current/total floors from Sinyi's floor text.
+    if room_type_slug:
+        parts.append(room_type_slug)
 
-    Sinyi typically shows '5樓/12樓' or '5F/12F'.
-    Returns (current, total, raw_str).
-    """
-    cur, tot = parse_floor_string(text)
-    return cur, tot, text.strip()
+    if page >= 2:
+        parts.append(str(page))
+
+    parts.append("index.html")
+    return "/".join(parts)
 
 
-def _parse_card(card: Tag, city_name: str) -> Optional[Property]:
-    """Parse one listing <div> into a Property.
+def _id_from_href(href: str) -> Optional[str]:
+    m = re.search(r"/rent/houseno/([A-Z0-9]+)", href)
+    return m.group(1) if m else None
 
-    FIXME: selectors below are best-guess based on sinyi.com.tw HTML structure.
-    Open DevTools on the listing page and adjust class names as needed.
-    """
-    try:
-        # Title
-        title_el = card.select_one(".item-title, h3.name, .house-name")
-        title = title_el.get_text(strip=True) if title_el else ""
 
-        # Link + ID
-        link_el = card.select_one("a[href*='/rent/']")
-        if not link_el:
-            return None
-        href = str(link_el.get("href", ""))
-        if not href.startswith("http"):
-            href = BASE_URL + href
-        # Extract numeric ID from URL e.g. /rent/detail/12345678/
-        id_match = re.search(r"/(\d{6,})", href)
-        listing_id = id_match.group(1) if id_match else href
+def _parse_card(a_tag: Tag, city_name: str) -> Optional[Property]:
+    href = str(a_tag.get("href", ""))
+    if not href.startswith("http"):
+        href = BASE_URL + href
 
-        # Price
-        price_el = card.select_one(".price, .rent-price, [class*='price']")
-        price = clean_price(price_el.get_text(strip=True) if price_el else None)
-        if price is None:
-            return None
-
-        # Area
-        area_el = card.select_one(".area, [class*='area']")
-        area = clean_area(area_el.get_text(strip=True) if area_el else None)
-
-        # Layout
-        layout_el = card.select_one(".layout, .room-type, [class*='layout']")
-        layout = layout_el.get_text(strip=True) if layout_el else None
-
-        # Floor
-        floor_el = card.select_one(".floor, [class*='floor']")
-        floor_raw = floor_el.get_text(strip=True) if floor_el else ""
-        cur_floor, tot_floors, floor_str = _parse_floor_sinyi(floor_raw)
-
-        # Address
-        addr_el = card.select_one(".address, [class*='address']")
-        address = addr_el.get_text(strip=True) if addr_el else city_name
-
-        # Image
-        img_el = card.select_one("img[src], img[data-src]")
-        image_url = None
-        if img_el:
-            image_url = str(img_el.get("data-src") or img_el.get("src") or "")
-            if image_url.startswith("//"):
-                image_url = "https:" + image_url
-
-        return Property(
-            id=listing_id,
-            platform="Sinyi",
-            title=title,
-            price=price,
-            area=area,
-            layout=layout,
-            address=address,
-            floor=floor_str or None,
-            image_url=image_url or None,
-            link=href,
-            current_floor=cur_floor,
-            total_floors=tot_floors,
-        )
-    except Exception as exc:
-        logger.warning("Sinyi: failed to parse card — %s", exc)
+    listing_id = _id_from_href(href)
+    if not listing_id:
         return None
 
+    text = a_tag.get_text(separator=" ", strip=True)
+    if not text:
+        return None
 
-def _fetch_city(city_name: str, city_slug: str, config: dict) -> list[Property]:
+    # Price — "XX,XXX元/月"
+    price_m = re.search(r"([\d,]+)\s*元/月", text)
+    price = clean_price(price_m.group(1)) if price_m else None
+    if price is None:
+        return None
+
+    # Floor — "12/15樓"
+    floor_m = re.search(r"(\d+)/(\d+)樓", text)
+    floor_str = floor_m.group(0) if floor_m else None
+    cur_floor, tot_floors = parse_floor_string(floor_str or "")
+
+    # Area — "51.93坪"
+    area_m = re.search(r"([\d.]+)\s*坪", text)
+    area = clean_area(area_m.group(1)) if area_m else None
+
+    # Layout — "3房2廳2衛"
+    layout_m = re.search(r"\d+房[\d廳衛]+", text)
+    layout = layout_m.group(0) if layout_m else None
+
+    # Title — first non-empty line
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    title = lines[0] if lines else listing_id
+
+    # Address — "台北市文山區..."
+    addr_m = re.search(r"[一-鿿]{2,3}[市縣][一-鿿]{2,3}[區鄉鎮][一-鿿\d]+", text)
+    address = addr_m.group(0) if addr_m else city_name
+
+    # Elevator heuristic
+    has_elev = "電梯" in text or (tot_floors or 0) >= 7 or (cur_floor or 0) >= 7
+
+    # Image — CDN pattern
+    img_tag = a_tag.find("img")
+    img: str | None = None
+    if img_tag:
+        img = str(img_tag.get("data-src") or img_tag.get("src") or "")
+        if img.startswith("//"):
+            img = "https:" + img
+        if not img or img.startswith("data:"):
+            img = None
+    if not img:
+        img = f"https://res.sinyi.com.tw/rent/{listing_id}/smallimg/A.JPG"
+
+    return Property(
+        id=listing_id,
+        platform="Sinyi",
+        title=title,
+        price=price,
+        area=area,
+        layout=layout,
+        address=address,
+        floor=floor_str,
+        image_url=img,
+        link=href,
+        current_floor=cur_floor,
+        total_floors=tot_floors,
+        has_elevator=has_elev,
+        tags=[],
+    )
+
+
+def _fetch_url(client: httpx.Client, url: str, city_name: str) -> list[Property]:
+    logger.debug("Sinyi: GET %s", url)
+    resp = client.get(url)
+    if resp.status_code != 200:
+        logger.warning("Sinyi: HTTP %d for %s", resp.status_code, url)
+        return []
+
+    soup  = BeautifulSoup(resp.text, "lxml")
+    cards = soup.select('a[href*="/rent/houseno/"]')
+
     results: list[Property] = []
-    page = 1
+    for tag in cards:
+        prop = _parse_card(tag, city_name)
+        if prop:
+            results.append(prop)
+    return results
+
+
+def _fetch_city(
+    city_name:      str,
+    city_slug:      str,
+    city_regions:   list[str],
+    price_min:      int,
+    price_max:      int,
+    area_min:       float,
+    room_type_slug: str,
+) -> list[Property]:
+    zip_codes = [DISTRICT_ZIPS[r] for r in city_regions if r in DISTRICT_ZIPS]
+    if city_regions and not zip_codes:
+        unknown = [r for r in city_regions if r not in DISTRICT_ZIPS]
+        logger.warning("Sinyi: no zip code found for regions %s — fetching whole city", unknown)
+
+    results:  list[Property] = []
+    seen_ids: set[str]       = set()
 
     with httpx.Client(headers=HEADERS, timeout=20, follow_redirects=True) as client:
+        page = 1
         while True:
-            url  = _build_search_url(city_slug, config, page)
-            logger.debug("Sinyi: GET %s", url)
-            resp = client.get(url)
-            if resp.status_code != 200:
-                logger.warning("Sinyi: HTTP %d for %s", resp.status_code, url)
+            url   = _build_url(city_slug, zip_codes, price_min, price_max, area_min, room_type_slug, page)
+            props = _fetch_url(client, url, city_name)
+
+            if not props:
                 break
 
-            soup  = BeautifulSoup(resp.text, "lxml")
-            cards = soup.select(".item-list .item, .house-list .house-item, [class*='list-item']")
+            new_ids = {p.id for p in props} - seen_ids
+            if page > 1 and not new_ids:
+                break  # pagination looped back or exhausted
 
-            if not cards:
-                logger.info("Sinyi: no cards found on page %d — stopping", page)
-                break
+            for p in props:
+                if p.id not in seen_ids:
+                    seen_ids.add(p.id)
+                    results.append(p)
 
-            for card in cards:
-                prop = _parse_card(card, city_name)
-                if prop:
-                    results.append(prop)
+            logger.info("Sinyi %s page %d: %d new (total %d)", city_name, page, len(new_ids), len(results))
 
-            # Pagination: stop if no "next page" link
-            next_pg = soup.select_one("a.next, [class*='pagination'] a[rel='next']")
-            if not next_pg:
-                break
+            if len(new_ids) < len(props):
+                break  # partial new batch → last page
 
             page += 1
             throttle(1.5)
@@ -189,17 +248,37 @@ def _fetch_city(city_name: str, city_slug: str, config: dict) -> list[Property]:
 
 
 def fetch_sinyi(config: dict) -> list[Property]:
-    cities = config.get("target_cities", [])
-    all_props: list[Property] = []
+    cities_cfg: list[dict] = config.get("cities") or [
+        {"name": c, "regions": config.get("target_regions", [])}
+        for c in config.get("target_cities", [])
+    ]
+    price_min = config.get("price_min", 0)
+    price_max = config.get("price_max", 999_999)
+    area_min  = float(config.get("area_min", 0))
+    all_regions_flag: bool = config.get("all_regions", True)
 
-    for city_name in cities:
-        city_slug = CITY_SLUGS.get(city_name)
-        if city_slug is None:
+    room_types   = config.get("room_types", [])
+    type_slugs   = [ROOM_TYPE_SLUGS[rt] for rt in room_types if rt in ROOM_TYPE_SLUGS]
+    # If no known slug, fetch without type filter (server returns all types)
+    type_slug    = type_slugs[0] if type_slugs else ""
+
+    if not type_slugs and room_types:
+        unknown_types = [rt for rt in room_types if rt not in ROOM_TYPE_SLUGS]
+        logger.warning("Sinyi: unknown room_type slug for %s — fetching without type filter", unknown_types)
+
+    all_props: list[Property] = []
+    for city_entry in cities_cfg:
+        city_name   = city_entry.get("name", "")
+        city_slug   = CITY_SLUGS.get(city_name)
+        city_regions = [] if all_regions_flag else city_entry.get("regions", [])
+
+        if not city_slug:
             logger.warning("Sinyi: unknown city '%s', skipping", city_name)
             continue
-        logger.info("Sinyi: fetching %s …", city_name)
-        props = _fetch_city(city_name, city_slug, config)
-        logger.info("Sinyi: got %d listings for %s", len(props), city_name)
+
+        logger.info("Sinyi: fetching %s / regions=%s", city_name, city_regions or "全區")
+        props = _fetch_city(city_name, city_slug, city_regions, price_min, price_max, area_min, type_slug)
+        logger.info("Sinyi: %d listings for %s", len(props), city_name)
         all_props.extend(props)
 
     return all_props

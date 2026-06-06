@@ -23,6 +23,7 @@ _TEMPLATE = """\
    class="card-item bg-white rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col{% if kind == 'delisted' %} opacity-50 grayscale{% endif %}"
    data-region="{{ region }}"
    data-city="{{ city }}"
+   data-platform="{{ prop.platform }}"
    data-elevator="{{ 'true' if prop.has_elevator else 'false' }}"
    data-status="{{ kind }}">
 
@@ -54,7 +55,15 @@ _TEMPLATE = """\
         在架中
       </span>
       {% endif %}
-      <span class="text-xs text-slate-400 font-medium">{{ prop.platform }}</span>
+      {% if prop.platform == "591" %}
+      <span class="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-50 text-orange-600 ring-1 ring-orange-200">591</span>
+      {% elif prop.platform == "Sinyi" %}
+      <span class="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-600 ring-1 ring-red-200">信義</span>
+      {% elif prop.platform == "Yungching" %}
+      <span class="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-50 text-violet-600 ring-1 ring-violet-200">永慶</span>
+      {% else %}
+      <span class="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 ring-1 ring-slate-200">{{ prop.platform }}</span>
+      {% endif %}
     </div>
 
     <!-- price -->
@@ -138,6 +147,13 @@ _TEMPLATE = """\
     /* region row hidden when city not selected */
     .city-regions { display: none; }
     .city-regions.active { display: flex; }
+
+    /* platform tags */
+    .platform-tag { cursor: pointer; transition: all .15s; }
+    .platform-tag.active {
+      background: #4f46e5; color: white;
+      box-shadow: 0 1px 3px rgba(79,70,229,.35);
+    }
   </style>
 </head>
 <body class="bg-slate-50 min-h-screen">
@@ -221,7 +237,20 @@ _TEMPLATE = """\
         {% endfor %}
       </div>
 
-      <!-- Layer 2: Building type tabs -->
+      <!-- Layer 2: Platform filter (only shown when >1 platform) -->
+      {% if platforms | length > 1 %}
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wide w-8 shrink-0">來源</span>
+        <button class="platform-tag active text-xs font-semibold px-3.5 py-1.5 rounded-full bg-slate-100 text-slate-600"
+                data-platform="all">全部</button>
+        {% for p in platforms %}
+        <button class="platform-tag text-xs font-semibold px-3.5 py-1.5 rounded-full bg-slate-100 text-slate-600"
+                data-platform="{{ p }}">{{ platform_labels.get(p, p) }}</button>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- Layer 3: Building type tabs -->
       <div class="flex items-end gap-0 border-b border-slate-200">
         <span class="text-xs font-semibold text-slate-400 uppercase tracking-wide w-8 shrink-0 pb-2.5">類型</span>
         <button class="bld-tab active text-sm font-semibold px-5 py-2.5 rounded-t-lg border border-slate-200 -mb-px"
@@ -271,9 +300,10 @@ _TEMPLATE = """\
   <script>
   (function() {
     var firstCity     = {{ first_city_js }};
-    var currentCity   = (document.querySelector('.city-tab.active') || {dataset:{city:firstCity}}).dataset.city;
-    var currentRegion = 'all';
-    var currentBld    = 'elevator';
+    var currentCity     = (document.querySelector('.city-tab.active') || {dataset:{city:firstCity}}).dataset.city;
+    var currentRegion   = 'all';
+    var currentBld      = 'elevator';
+    var currentPlatform = 'all';
 
     var allCards   = Array.from(document.querySelectorAll('.card-item'));
     var sections   = Array.from(document.querySelectorAll('.status-section'));
@@ -283,14 +313,15 @@ _TEMPLATE = """\
       var visible = 0;
 
       allCards.forEach(function(card) {
-        var cityOk   = currentCity === 'all' || card.dataset.city === currentCity;
-        var regionOk = currentRegion === 'all' || card.dataset.region === currentRegion;
+        var cityOk     = currentCity === 'all' || card.dataset.city === currentCity;
+        var regionOk   = currentRegion === 'all' || card.dataset.region === currentRegion;
+        var platformOk = currentPlatform === 'all' || card.dataset.platform === currentPlatform;
         var isDelisted = card.dataset.status === 'delisted';
-        var elevOk   = isDelisted || (currentBld === 'elevator'
-                       ? card.dataset.elevator === 'true'
-                       : card.dataset.elevator === 'false');
+        var elevOk     = isDelisted || (currentBld === 'elevator'
+                         ? card.dataset.elevator === 'true'
+                         : card.dataset.elevator === 'false');
 
-        if (cityOk && regionOk && elevOk) {
+        if (cityOk && regionOk && platformOk && elevOk) {
           card.classList.remove('hidden-by-filter');
           visible++;
         } else {
@@ -315,10 +346,11 @@ _TEMPLATE = """\
 
       ['elevator','walkup'].forEach(function(bld) {
         var count = allCards.filter(function(c) {
-          var cityOk   = currentCity === 'all' || c.dataset.city === currentCity;
-          var regionOk = currentRegion === 'all' || c.dataset.region === currentRegion;
-          var elevOk   = bld === 'elevator' ? c.dataset.elevator === 'true' : c.dataset.elevator === 'false';
-          return cityOk && regionOk && elevOk;
+          var cityOk     = currentCity === 'all' || c.dataset.city === currentCity;
+          var regionOk   = currentRegion === 'all' || c.dataset.region === currentRegion;
+          var platformOk = currentPlatform === 'all' || c.dataset.platform === currentPlatform;
+          var elevOk     = bld === 'elevator' ? c.dataset.elevator === 'true' : c.dataset.elevator === 'false';
+          return cityOk && regionOk && platformOk && elevOk;
         }).length;
         var el = document.getElementById('count-' + bld);
         if (el) el.textContent = count + ' 筆';
@@ -361,6 +393,16 @@ _TEMPLATE = """\
         });
         btn.classList.add('active');
         currentRegion = btn.dataset.region;
+        applyFilter();
+      });
+    });
+
+    // ── Platform tags ──────────────────────────────────────────
+    document.querySelectorAll('.platform-tag').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('.platform-tag').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentPlatform = btn.dataset.platform;
         applyFilter();
       });
     });
@@ -427,6 +469,17 @@ def render_report(
         for r in regions:
             region_to_city[r] = city_name
 
+    # collect unique platforms (preserve insertion order = by first appearance)
+    platforms: list[str] = list(dict.fromkeys(
+        e.property.platform
+        for e in new_entries + drop_entries + active_entries
+    ))
+    platform_labels: dict[str, str] = {
+        "591":       "591",
+        "Sinyi":     "信義",
+        "Yungching": "永慶",
+    }
+
     # collect unique regions from active entries (address format: "板橋區-路名")
     seen_regions: dict[str, None] = {}
     for e in new_entries + drop_entries + active_entries:
@@ -456,6 +509,8 @@ def render_report(
         all_regions_list=all_regions_list,
         region_to_city=region_to_city,
         first_city_js=f'"{city_names[0]}"' if city_names else '"all"',
+        platforms=platforms,
+        platform_labels=platform_labels,
     )
 
     filename = out_dir / f"report_{date.today().strftime('%Y%m%d')}.html"

@@ -3,9 +3,21 @@
 ## 執行
 
 ```powershell
-py main.py --platforms 591    # 只跑 591（目前唯一實作的平台）
-py main.py --dry-run          # 不打網路，測試 diff + report 流程
+py main.py                              # 三個平台全跑
+py main.py --platforms 591              # 只跑 591
+py main.py --platforms 591 sinyi        # 指定多個平台
+py main.py --dry-run                    # 不打網路，測試 diff + report 流程
 ```
+
+---
+
+## 平台支援
+
+| 平台 | 模組 | 抓取方式 |
+|------|------|----------|
+| 591 | `fetchers/fetcher_591.py` | Playwright headless 暖身建 session，再用 `context.request.get()` 打 BFF API |
+| 信義房屋 | `fetchers/sinyi.py` | httpx + BeautifulSoup（SSR HTML，不需 JS） |
+| 永慶房屋 | `fetchers/yungching.py` | httpx + BeautifulSoup（若回傳空殼需改 Playwright） |
 
 ---
 

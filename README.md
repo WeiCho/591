@@ -1,6 +1,13 @@
 # 台灣租房監控機器人
 
-抓取 591 租屋資訊 → 去重過濾 → 歷史比對 → 輸出靜態 HTML 報表 → 自動發布 GitHub Pages。
+抓取 591、信義房屋、永慶房屋租屋資訊 → 去重過濾 → 歷史比對 → 輸出靜態 HTML 報表 → 自動發布 GitHub Pages。
+
+## 安裝
+
+```powershell
+pip install -r requirements.txt
+playwright install chromium
+```
 
 ## 設定
 
@@ -13,19 +20,14 @@ cp config.example.json config.json
 - `regions` 帶「區」字；空陣列則不限行政區
 - `github_publish` 選填，省略則只產本機報表；token 需 Contents R+W 權限
 
-## 安裝
-
-```powershell
-pip install -r requirements.txt
-playwright install chromium
-```
-
 ## 執行
 
 ```powershell
-py main.py                    # 正式執行
-py main.py --platforms 591    # 只跑 591
-py main.py --dry-run          # 測試模式（不打網路）
+py main.py                              # 正式執行（三個平台全跑）
+py main.py --platforms 591              # 只跑 591
+py main.py --platforms 591 sinyi        # 指定多個平台
+py main.py --dry-run                    # 測試模式（不打網路）
+py main.py --config my_config.json     # 指定設定檔
 ```
 
 > Windows 必須用 `py`，不是 `python`（python 指向 MS Store 空殼）
@@ -42,4 +44,4 @@ py main.py --dry-run          # 測試模式（不打網路）
 
 ## 注意
 
-591 受 Cloudflare 保護，**只能在本機執行**，外部 IP（GitHub Actions 等）會被 403 擋。
+591 受 Cloudflare 保護（使用 Playwright headless），**只能在本機執行**，外部 IP（GitHub Actions 等）會被擋。
