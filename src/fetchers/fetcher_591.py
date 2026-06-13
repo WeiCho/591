@@ -281,7 +281,8 @@ def _resolve_section_ids(regions: list[str]) -> list[int | None]:
         return [None]
     ids: list[int | None] = []
     for region in regions:
-        sid = SECTION_IDS.get(region)
+        key = region.removesuffix("區")
+        sid = SECTION_IDS.get(key)
         if sid is None:
             logger.warning("591: unknown region '%s', skipping", region)
         else:
