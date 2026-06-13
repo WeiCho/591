@@ -7,7 +7,7 @@ on:
 
 jobs:
   run:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,5 +32,3 @@ jobs:
 
       - name: Run scraper
         run: python3 main.py
-        env:
-          SSL_CERT_FILE: /etc/ssl/cert.pem
